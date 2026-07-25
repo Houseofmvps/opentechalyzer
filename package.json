@@ -1,0 +1,80 @@
+{
+  "name": "opentechalyzer",
+  "version": "0.1.0",
+  "description": "Free, open source website technology detection. Identifies the full stack of any URL from headers, cookies, rendered DOM, JS globals, sourcemap dependencies, DNS records, certificate transparency, well-known probes and favicon hashes.",
+  "keywords": [
+    "tech-stack",
+    "technology-detection",
+    "wappalyzer-alternative",
+    "builtwith-alternative",
+    "fingerprinting",
+    "website-analysis",
+    "cms-detection",
+    "osint",
+    "competitive-intelligence",
+    "cli",
+    "mcp",
+    "model-context-protocol",
+    "claude"
+  ],
+  "license": "MIT",
+  "author": "Houseofmvps",
+  "homepage": "https://github.com/Houseofmvps/opentechalyzer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Houseofmvps/opentechalyzer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Houseofmvps/opentechalyzer/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "opentechalyzer": "./dist/cli.js",
+    "ota": "./dist/cli.js",
+    "opentechalyzer-mcp": "./dist/mcp.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.13.0",
+    "kleur": "^4.1.5",
+    "zod": "^3.24.1"
+  },
+  "peerDependencies": {
+    "playwright": "^1.40.0"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
