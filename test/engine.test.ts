@@ -203,3 +203,35 @@ describe('detect', () => {
     }
   });
 });
+
+describe('implication and observation interaction', () => {
+  const db: Fingerprint[] = [
+    { name: 'Statamicish', categories: ['cms'], headers: { 'x-powered-by': 'Statamicish' }, implies: ['Laravelish'] },
+    // Deliberately weak direct signal, mirroring the generic XSRF-TOKEN cookie case.
+    { name: 'Laravelish', categories: ['backend-framework'], cookies: { '^XSRF-TOKEN$': { re: '', confidence: 0.3 } } },
+  ];
+
+  it('lifts a weakly observed technology to the confidence of a strong implication', () => {
+    const found = detect(
+      db,
+      bundle({ headers: { 'x-powered-by': 'Statamicish' }, setCookies: ['XSRF-TOKEN=abc; Path=/'] }),
+      0,
+    );
+    const laravelish = found.find((d) => d.name === 'Laravelish');
+    expect(laravelish).toBeDefined();
+    // 88-ish from the header, times the 0.85 inheritance penalty, well above the 30% direct hit.
+    expect(laravelish!.confidence).toBeGreaterThan(60);
+    // It was genuinely observed, so it must not be relabelled as inferred.
+    expect(laravelish!.inferred).toBe(false);
+  });
+
+  it('does not lower a strong observation to a weaker implication', () => {
+    const strongDb: Fingerprint[] = [
+      { name: 'Weakling', categories: ['misc'], html: [{ re: 'weak', confidence: 0.4 }], implies: ['Strongling'] },
+      { name: 'Strongling', categories: ['misc'], cookies: { '^strong_sess$': '' } },
+    ];
+    const found = detect(strongDb, bundle({ html: 'weak', setCookies: ['strong_sess=1'] }), 0);
+    const strong = found.find((d) => d.name === 'Strongling');
+    expect(strong!.confidence).toBeGreaterThan(90);
+  });
+});

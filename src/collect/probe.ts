@@ -24,7 +24,7 @@ export async function runProbes(
   baseUrl: string,
   fingerprints: Fingerprint[],
   opts: AnalyzeOptions,
-): Promise<Record<string, ProbeResult>> {
+): Promise<{ results: Record<string, ProbeResult>; failed: string[] }> {
   const wanted = new Set<string>(BASELINE_PATHS);
   for (const fp of fingerprints) {
     for (const probe of fp.probe ?? []) {
@@ -37,13 +37,17 @@ export async function runProbes(
   const results: Record<string, ProbeResult> = {};
   const paths = [...wanted];
   const CONCURRENCY = 6;
+  const failed: string[] = [];
 
   for (let i = 0; i < paths.length; i += CONCURRENCY) {
     const slice = paths.slice(i, i + CONCURRENCY);
     await Promise.all(
       slice.map(async (path) => {
         try {
-          const res = await fetchPage(origin + path, { ...opts, timeout: Math.min(opts.timeout ?? 15000, 8000) });
+          // The timeout is no longer shrunk below the caller's value. Probes carry some of
+          // the strongest evidence in the database (Django, WordPress, GraphQL, Vault), and
+          // a probe that times out is indistinguishable from a technology being absent.
+          const res = await fetchPage(origin + path, opts);
           results[path] = {
             status: res.status,
             // Cap the body: error pages and sitemaps can be enormous and we only need the head.
@@ -51,11 +55,11 @@ export async function runProbes(
             headers: res.headers,
           };
         } catch {
-          // A failed probe is simply an absent signal.
+          failed.push(path);
         }
       }),
     );
   }
 
-  return results;
+  return { results, failed };
 }

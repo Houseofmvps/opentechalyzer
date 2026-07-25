@@ -411,10 +411,16 @@ export function detect(
       const inheritedConfidence = Math.round(det.confidence * 0.85 * 10) / 10;
       const existing = raw.get(impliedName);
       if (existing) {
-        // Observed detections always win over inferred ones.
-        if (existing.inferred && inheritedConfidence > existing.confidence) {
+        // An implication is corroborating evidence, so take the stronger of the two rather
+        // than letting whichever arrived first win. Without this, a weak direct match
+        // suppresses a strong inference: laravel.com matched Laravel at only 30% from a
+        // generic XSRF-TOKEN cookie, which blocked the 75% inference from Statamic (a
+        // framework built on Laravel) and understated a certainty as a maybe.
+        if (inheritedConfidence > existing.confidence) {
           existing.confidence = inheritedConfidence;
-          existing.impliedBy = det.name;
+          // `inferred` stays false when the technology was genuinely observed; only the
+          // confidence is lifted. Provenance is only rewritten for a purely inferred entry.
+          if (existing.inferred) existing.impliedBy = det.name;
         }
         continue;
       }

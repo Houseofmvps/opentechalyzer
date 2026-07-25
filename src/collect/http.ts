@@ -11,6 +11,37 @@ export interface FetchedPage {
   body: string;
 }
 
+/**
+ * Global cap on concurrent HTTP requests across the whole process.
+ *
+ * Without this, batch mode multiplies out: `-j 10` runs ten scans, each firing its own
+ * probe fan-out, so a hundred sockets compete and slow requests hit their timeout. A timed
+ * out probe looks identical to an absent signal, so detections silently disappear at high
+ * concurrency. Django on djangoproject.com scored 90% alone and vanished entirely at `-j 5`,
+ * which is the worst kind of bug: quieter results that still look plausible.
+ *
+ * Bounding total in-flight requests here keeps per-request latency stable no matter what
+ * `-j` is set to, so a bulk run returns the same technologies a single scan would.
+ */
+const MAX_INFLIGHT = Number(process.env['OPENTECHALYZER_MAX_INFLIGHT'] ?? 12);
+let inflight = 0;
+const waiting: Array<() => void> = [];
+
+async function acquire(): Promise<void> {
+  if (inflight < MAX_INFLIGHT) {
+    inflight++;
+    return;
+  }
+  await new Promise<void>((resolve) => waiting.push(resolve));
+  inflight++;
+}
+
+function release(): void {
+  inflight--;
+  const next = waiting.shift();
+  if (next) next();
+}
+
 export function normaliseUrl(input: string): string {
   const trimmed = input.trim();
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
@@ -23,6 +54,7 @@ export async function fetchPage(
   opts: AnalyzeOptions = {},
   init: RequestInit = {},
 ): Promise<FetchedPage> {
+  await acquire();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeout ?? 15_000);
   try {
@@ -60,6 +92,7 @@ export async function fetchPage(
     return { finalUrl: res.url || url, status: res.status, headers, setCookies, body };
   } finally {
     clearTimeout(timer);
+    release();
   }
 }
 

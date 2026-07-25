@@ -154,8 +154,16 @@ export async function analyze(
     progress('probe', 'well-known paths');
     jobs.push(
       time('probe', async () => {
-        bundle.probes = await runProbes(page.finalUrl, fingerprints, opts);
-        bundle.robots = bundle.probes['/robots.txt']?.body;
+        const { results, failed } = await runProbes(page.finalUrl, fingerprints, opts);
+        bundle.probes = results;
+        bundle.robots = results['/robots.txt']?.body;
+        if (failed.length > 0) {
+          // Surfaced rather than swallowed: a failed probe removes evidence, so the user
+          // needs to know the result is less complete than it looks.
+          warnings.push(
+            `${failed.length} probe request(s) failed (${failed.slice(0, 4).join(', ')}${failed.length > 4 ? ', ...' : ''}). Detections relying on them may be missing. Retry, or raise --timeout.`,
+          );
+        }
       }),
     );
   }

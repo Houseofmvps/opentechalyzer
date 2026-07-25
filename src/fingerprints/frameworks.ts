@@ -270,7 +270,13 @@ export const backend: Fingerprint[] = [
     name: 'Laravel',
     categories: ['backend-framework'],
     website: 'https://laravel.com',
-    cookies: { '^laravel_session$': '', '^XSRF-TOKEN$': '', '^laravel_token$': '' },
+    cookies: {
+      '^laravel_session$': '',
+      '^laravel_token$': '',
+      // XSRF-TOKEN is the Angular/Axios convention and is set by many non-PHP stacks. On its
+      // own it reported Laravel at 94% on wix.com, so it is kept only as weak corroboration.
+      '^XSRF-TOKEN$': { re: '', confidence: 0.3 },
+    },
     html: ['window\\.Laravel', 'laravel_session'],
     implies: ['PHP'],
   },
@@ -308,7 +314,10 @@ export const backend: Fingerprint[] = [
     website: 'https://rubyonrails.org',
     headers: { 'x-runtime': '', 'x-request-id': { re: '^[0-9a-f-]{36}$', confidence: 0.2 } },
     meta: { 'csrf-param': 'authenticity_token' },
-    cookies: { '_session$': '', '^_rails': '' },
+    // Rails names its session cookie "_<appname>_session". The leading underscore is the
+    // discriminator: without it, "laravelcom_session" matched and reported Rails at 94% on
+    // laravel.com, a site with no Ruby in it at all.
+    cookies: { '^_[a-zA-Z0-9]+_session$': '', '^_rails': '' },
     html: ['name="authenticity_token"', '/assets/application-[0-9a-f]{32,64}\\.js'],
     implies: ['Ruby'],
   },
