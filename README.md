@@ -2,6 +2,11 @@
 
 **Free, open source website technology detection. No subscription, no API key, no per-lookup credits.**
 
+> Runs entirely on your machine. There is no hosted service and no account.
+> The only feature that can ever cost anything is [`ota reverse`](#does-this-cost-me-anything),
+> which queries a public dataset on your own Google Cloud project and is free under Google's
+> 1 TB monthly allowance. Everything else is free, always.
+
 Point it at any URL and it tells you what the site is built with: platform, framework, backend,
 hosting, CDN, payment processor, analytics, every installed Shopify app, and more. Then it goes
 further than a stack list: contact details, social handles, TLS posture, estimated software
@@ -177,34 +182,111 @@ reported per URL on stderr so one dead host never aborts a batch of thousands.
 The inverse of a scan. Instead of "what does this site run?", ask "which sites run this?" — the
 question that turns a detector into a lead-sourcing tool.
 
+### Examples
+
+**Build a prospect list.** Shopify stores that also run Klaviyo, inside the top 100k sites:
+
 ```bash
-ota reverse --tech Shopify --tech Klaviyo --rank 100000 --dry-run
-ota reverse --tech Shopify --not-tech "Google Analytics" --limit 500 -f csv
-ota reverse --category Ecommerce --rank 10000
+ota reverse --tech Shopify --tech Klaviyo --rank 100000
 ```
 
-This queries the [HTTP Archive](https://httparchive.org/) public dataset on BigQuery, a monthly
-crawl of roughly 16 million pages. The data is free and public; what was missing was a way to
-query it without writing SQL.
+**Competitive displacement.** Sites on a competitor's tool but not yours, exported for outreach:
 
-**Setup.** You need your own Google Cloud project, because BigQuery bills the querying project
-even though the dataset itself is public:
+```bash
+ota reverse --tech Yotpo --not-tech "Judge.me" --limit 500 -f csv > switch-targets.csv
+```
+
+**Market sizing.** How much of the top 10k is on a given platform:
+
+```bash
+ota reverse --category Ecommerce --rank 10000 --limit 10000 -f json | jq '.rows | length'
+```
+
+**Agency prospecting.** Stores running an old stack with no analytics, which usually means
+somebody needs help:
+
+```bash
+ota reverse --tech WooCommerce --not-tech "Google Analytics" --rank 1000000 --limit 1000
+```
+
+**Always cost-check an unfamiliar query first.** This prints the SQL and the byte estimate and
+bills nothing:
+
+```bash
+ota reverse --tech Shopify --dry-run
+```
+
+**Chain it into a real scan.** Reverse lookup finds candidates, a direct scan verifies them and
+pulls contact details:
+
+```bash
+ota reverse --tech Shopify --tech Recharge --rank 100000 -f json | jq -r '.rows[].page' > leads.txt
+ota -i leads.txt --crawl --fields contact,social,signals -f csv -j 10 > enriched.csv
+```
+
+From Claude, Claude Code, Codex or ChatGPT, just ask:
+
+> Find me 200 Shopify stores in the top 100k that use Klaviyo but not Gorgias, then check which
+> ones have a public support email.
+
+### Does this cost me anything?
+
+**Opentechalyzer itself is free and always will be.** It is MIT, it runs entirely on your machine,
+there is no hosted service, no account and no API key. We run no servers, so there is nothing for
+us to charge for and nothing for us to pay for. Every other command in this tool — scanning,
+enrichment, subdomains, CVE lookup, email verification, change tracking — costs exactly nothing.
+
+`ota reverse` is the single exception, and the cost is not ours and not for hosting:
+
+- Answering "which sites use Shopify" requires a crawl of the whole web. Nobody can do that from
+  a laptop.
+- HTTP Archive already does it, monthly, across ~16 million pages, and publishes the results as a
+  **free public dataset** on Google BigQuery. Google stores that data at no cost to you or us.
+- But BigQuery's pricing model charges for **compute, not storage** — specifically for bytes
+  scanned by a query, billed to whoever runs it. So the query runs on Google's machines and
+  Google bills **your** Google Cloud project. Not this repo, not GitHub, not us.
+
+Think of `ota reverse` as a free SQL client. The client costs nothing; the database it talks to
+happens to meter query compute.
+
+**In practice most people pay nothing**, because Google gives every account **1 TB of free query
+volume per month** and a well-filtered query is far smaller than that. A `--rank 100000` lookup
+typically scans a few hundred MB to a few GB — dozens or hundreds of such queries fit inside the
+free tier.
+
+Costs only appear if you run broad, unfiltered queries repeatedly. Which is why the guard rails
+are on by default:
+
+| Guard | What it does |
+| --- | --- |
+| Automatic dry run | Every query is estimated before it runs, and the estimate is printed |
+| 200 GB ceiling | Execution is refused above it unless you raise `--max-bytes` |
+| Server-side `maximumBytesBilled` | BigQuery itself rejects the job, rather than trusting our estimate |
+| `--dry-run` | Prints the SQL and cost, bills nothing |
+| `--rank` | The single biggest lever on cost. Use it |
+
+**If you never want to touch BigQuery, simply do not run `ota reverse`.** Nothing else in the tool
+uses it, and no other command will ever prompt you for cloud credentials.
+
+### Setup
+
+You need your own Google Cloud project, because BigQuery bills the querying project even though
+the dataset itself is public:
 
 ```bash
 gcloud auth login && gcloud config set project YOUR_PROJECT
 ```
 
-Alternatively set `GOOGLE_CLOUD_PROJECT` and `GOOGLE_ACCESS_TOKEN`.
+Alternatively set `GOOGLE_CLOUD_PROJECT` and `GOOGLE_ACCESS_TOKEN`. No `@google-cloud/bigquery`
+dependency is required; the tool talks to the REST API directly.
 
-**Costs are guarded, not assumed.** The first 1 TB per month is free, and a careless query over
-this dataset can scan several TB in one go. So every query is dry-run first, the estimate is
-printed, and execution is refused above a 200 GB ceiling unless you raise `--max-bytes`. Start
-with `--dry-run`, and use `--rank` aggressively: it is by far the biggest lever on cost.
+### What it is not
 
-**What it is not.** These results come from HTTP Archive's own Wappalyzer fork, not this project's
-fingerprints, so they can disagree with a direct scan. Coverage follows CrUX, so it skews to sites
-with real Chrome traffic and small stores may be absent entirely. Treat it as a sampling frame for
-building a prospect list, then verify each prospect with a real scan.
+These results come from HTTP Archive's own Wappalyzer fork, not this project's 588 fingerprints,
+so they can disagree with a direct scan. Coverage follows CrUX, so it skews to sites with real
+Chrome traffic and small or new stores may be absent entirely. The crawl is monthly, so the data
+lags by weeks. Treat it as a sampling frame for building a prospect list, then verify each
+prospect with a real scan.
 
 ## Library
 
