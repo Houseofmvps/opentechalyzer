@@ -32,8 +32,28 @@ import { diffSnapshots, loadSnapshot, saveSnapshot, toSnapshot } from './enrich/
 import { formatMarkdown, summarise } from './report/format.js';
 import type { AnalyzeResult, Category, Detection } from './types.js';
 
-const VERSION = '0.1.0';
+/**
+ * Read the version from package.json rather than hardcoding it.
+ *
+ * A hardcoded copy silently drifts: this reported 0.1.0 to clients after the package had
+ * already shipped as 0.1.1, so any client-side version check would have been wrong.
+ */
+const VERSION: string = await (async () => {
+  try {
+    const { readFile } = await import('node:fs/promises');
+    const { fileURLToPath } = await import('node:url');
+    const { dirname, join } = await import('node:path');
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(await readFile(join(here, '..', 'package.json'), 'utf8')) as {
+      version?: string;
+    };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
 
+/** Build a fully configured server instance. Called per session in HTTP mode. */
 const server = new McpServer({ name: 'opentechalyzer', version: VERSION });
 
 /** Compact JSON shape for structured output: everything a model needs, nothing it does not. */
@@ -629,5 +649,118 @@ function filterByCategories(result: AnalyzeResult, categories: Category[]): Anal
   return { ...result, detections, byCategory };
 }
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+/**
+ * Transport selection.
+ *
+ * stdio is the default and is what local clients use: Claude Code, Claude Desktop, Codex,
+ * Cursor, Windsurf, Zed. They spawn this process and talk over its pipes.
+ *
+ * Browser-hosted clients cannot spawn a local process, so ChatGPT and claude.ai require a
+ * reachable HTTPS endpoint speaking Streamable HTTP instead. `--http` serves exactly that.
+ * Run it behind a tunnel (`cloudflared tunnel --url http://localhost:3000`) or deploy it,
+ * then give the client the resulting `https://.../mcp` URL.
+ */
+const argv = process.argv.slice(2);
+
+if (argv.includes('--http')) {
+  const portFlag = argv.indexOf('--port');
+  const port = portFlag >= 0 ? Number(argv[portFlag + 1] ?? 3000) : Number(process.env['PORT'] ?? 3000);
+  const host = argv.includes('--host') ? (argv[argv.indexOf('--host') + 1] ?? '127.0.0.1') : '127.0.0.1';
+
+  const { StreamableHTTPServerTransport } = await import(
+    '@modelcontextprotocol/sdk/server/streamableHttp.js'
+  );
+  const { isInitializeRequest } = await import('@modelcontextprotocol/sdk/types.js');
+  const { createServer } = await import('node:http');
+  const { randomUUID } = await import('node:crypto');
+
+  /**
+   * Session-managed transports, keyed by the session id the SDK issues on initialize.
+   *
+   * A stateless transport was tried first and rejected everything after `initialize`, because
+   * the protocol requires a handshake before any other method and there was nowhere to record
+   * that it had happened. Real clients open a session and reuse it, so sessions are tracked.
+   */
+  const sessions = new Map<string, InstanceType<typeof StreamableHTTPServerTransport>>();
+
+  const http = createServer((req, res) => {
+    const url = req.url ?? '/';
+
+    if (!url.startsWith('/mcp')) {
+      const healthy = url === '/health' || url === '/';
+      res.writeHead(healthy ? 200 : 404, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify(
+          healthy
+            ? { ok: true, server: 'opentechalyzer', version: VERSION, endpoint: '/mcp', sessions: sessions.size }
+            : { error: 'Not found. The MCP endpoint is /mcp' },
+        ),
+      );
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', () => {
+      void (async () => {
+        let body: unknown;
+        if (chunks.length > 0) {
+          try {
+            body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          } catch {
+            res.writeHead(400, { 'content-type': 'application/json' });
+            res.end(
+              JSON.stringify({ jsonrpc: '2.0', error: { code: -32700, message: 'Parse error' }, id: null }),
+            );
+            return;
+          }
+        }
+
+        const sessionId = req.headers['mcp-session-id'] as string | undefined;
+        let transport = sessionId ? sessions.get(sessionId) : undefined;
+
+        if (!transport) {
+          if (!isInitializeRequest(body)) {
+            res.writeHead(400, { 'content-type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                error: { code: -32000, message: 'No valid session. Send an initialize request first.' },
+                id: null,
+              }),
+            );
+            return;
+          }
+          // A fresh transport and server per session, so concurrent clients stay isolated.
+          transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+            onsessioninitialized: (id: string): void => {
+              sessions.set(id, transport as never);
+            },
+          });
+          transport.onclose = (): void => {
+            if (transport?.sessionId) sessions.delete(transport.sessionId);
+          };
+          await server.connect(transport);
+        }
+
+        await transport.handleRequest(req, res, body);
+      })();
+    });
+  });
+
+  http.listen(port, host, () => {
+    process.stderr.write(
+      `Opentechalyzer MCP listening on http://${host}:${port}/mcp\n` +
+        `Health check: http://${host}:${port}/health\n\n` +
+        `Browser-based clients (ChatGPT, claude.ai) need a public HTTPS URL. Expose this with:\n` +
+        `  cloudflared tunnel --url http://${host}:${port}\n` +
+        `then add the resulting https URL + /mcp as a connector.\n\n` +
+        `This endpoint is UNAUTHENTICATED. Do not expose it to the open internet without\n` +
+        `putting auth in front of it, or anyone who finds the URL can run scans through you.\n`,
+    );
+  });
+} else {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}

@@ -1,6 +1,6 @@
 {
   "name": "opentechalyzer",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Free, open source website technology detection. Identifies the full stack of any URL from headers, cookies, rendered DOM, JS globals, sourcemap dependencies, DNS records, certificate transparency, well-known probes and favicon hashes.",
   "keywords": [
     "tech-stack",
@@ -55,6 +55,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "benchmark": "tsx scripts/benchmark.ts",
     "lint": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },

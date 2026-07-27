@@ -43,19 +43,25 @@ export async function runProbes(
     const slice = paths.slice(i, i + CONCURRENCY);
     await Promise.all(
       slice.map(async (path) => {
-        try {
-          // The timeout is no longer shrunk below the caller's value. Probes carry some of
-          // the strongest evidence in the database (Django, WordPress, GraphQL, Vault), and
-          // a probe that times out is indistinguishable from a technology being absent.
-          const res = await fetchPage(origin + path, opts);
-          results[path] = {
-            status: res.status,
-            // Cap the body: error pages and sitemaps can be enormous and we only need the head.
-            body: res.body.slice(0, 60_000),
-            headers: res.headers,
-          };
-        } catch {
-          failed.push(path);
+        // The timeout is not shrunk below the caller's value, and a failure is retried once.
+        // Probes carry some of the strongest evidence in the database (Django, WordPress,
+        // GraphQL, Vault), and a probe that times out is indistinguishable from a technology
+        // being absent, so a single dropped connection silently deletes a real detection.
+        // Django on djangoproject.com is the canonical case: its /admin/login/ page is
+        // dynamic and uncached, so it is exactly the request most likely to be slow.
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const res = await fetchPage(origin + path, opts);
+            results[path] = {
+              status: res.status,
+              // Cap the body: error pages and sitemaps can be enormous, we only need the head.
+              body: res.body.slice(0, 60_000),
+              headers: res.headers,
+            };
+            return;
+          } catch {
+            if (attempt === 1) failed.push(path);
+          }
         }
       }),
     );

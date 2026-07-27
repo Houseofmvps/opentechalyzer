@@ -85,8 +85,39 @@ command = "npx"
 args = ["-y", "opentechalyzer-mcp"]
 ```
 
-**Cursor, Windsurf, Zed and ChatGPT Developer Mode** all take the same command/args pair in their
-own MCP config. The server runs on stdio and needs no credentials.
+**Cursor, Windsurf and Zed** take the same command/args pair in their own MCP config.
+
+### ChatGPT and claude.ai (browser clients)
+
+These run in a browser and cannot spawn a local process, so the stdio command above will not
+work for them. They need a reachable HTTPS endpoint instead:
+
+```bash
+opentechalyzer-mcp --http --port 3000
+```
+
+Then expose it and register the resulting `https://<your-url>/mcp` as a connector:
+
+```bash
+cloudflared tunnel --url http://localhost:3000
+```
+
+`GET /health` returns server status, which is handy for checking a tunnel is live.
+
+> **The HTTP endpoint is unauthenticated.** Anyone who discovers the URL can run scans through
+> your machine. Keep it behind a tunnel you control, put auth in front of it, or shut it down
+> when you are finished. Do not park it on a public IP.
+
+### Which clients work how
+
+| Client | Transport | Works today |
+| --- | --- | --- |
+| Claude Code | stdio | Yes |
+| Claude Desktop | stdio | Yes |
+| Codex CLI | stdio | Yes |
+| Cursor / Windsurf / Zed | stdio | Yes |
+| ChatGPT (Developer Mode connectors) | HTTP | Yes, via `--http` + a public HTTPS URL |
+| claude.ai (Custom Connectors) | HTTP | Yes, via `--http` + a public HTTPS URL |
 
 Then just ask:
 
@@ -279,10 +310,52 @@ Guidelines that keep accuracy up:
 `npm test` enforces unique names, valid regexes, resolvable `implies`/`requires` targets, and that
 every `version` template has a matching capture group.
 
+## Accuracy benchmark
+
+Accuracy is measured, not asserted. The benchmark scans a fixed set of sites whose stacks were
+verified by hand (headers, cookies, `meta[generator]`, checked with curl) and scores the output
+against that ground truth:
+
+```bash
+npm run benchmark
+```
+
+```
+site                found    notes
+------------------------------------------------------
+gitlab.com          3/3      clean
+discourse.org       2/2      clean
+djangoproject.com   4/4      clean
+laravel.com         5/5      clean
+vercel.com          4/4      clean
+squarespace.com     1/1      clean
+wix.com             2/2      clean
+bigcommerce.com     3/3      clean
+ghost.org           2/2      clean
+basecamp.com        1/1      clean
+------------------------------------------------------
+Recall                 27/27 = 100%  (threshold 90%)
+Hard false positives   0             (threshold 0)
+```
+
+It fails on a **single** hard false positive, and only budgets misses. That asymmetry is
+deliberate: "we could not tell" is a usable answer, while "this Wix site runs Laravel" poisons a
+lead list and discredits every other row.
+
+Running it is the fastest way to catch a regression after editing fingerprints, and it is how
+every accuracy bug fixed so far was found, including one where bulk mode silently dropped
+detections at `-j 5` because probes were timing out. It is intentionally **not** part of
+`npm test`: it hits live third-party sites, so a green CI run must never depend on someone
+else's deploy schedule.
+
+`--json` gives machine-readable output; `--jobs N` changes concurrency. Ground truth lives in
+`scripts/benchmark.ts`, each case annotated with how it was verified.
+
 ## Development
 
 ```bash
 npm install && npm run build && npm test
+npm run benchmark   # live accuracy check, needs network
 ```
 
 ## Licence
