@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import kleur from 'kleur';
 import { analyze, analyzeMany } from './analyze.js';
 import { isRenderAvailable } from './collect/render.js';
@@ -24,7 +27,24 @@ import {
 import { formatCsv, formatMarkdown, formatTerminal, summarise } from './report/format.js';
 import type { AnalyzeOptions, AnalyzeResult, Category } from './types.js';
 
-const VERSION = '0.1.0';
+/**
+ * Read the version from package.json.
+ *
+ * This was hardcoded and drifted: `--version` still printed 0.1.0 on the 0.3.0 package. The
+ * same bug was fixed in the MCP server but missed here, which is exactly why neither should
+ * carry its own copy of the number.
+ */
+const VERSION: string = (() => {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')) as {
+      version?: string;
+    };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
 
 const HELP = `
 ${kleur.bold(kleur.cyan('Opentechalyzer'))} ${kleur.gray(`v${VERSION}`)}
