@@ -190,7 +190,7 @@ for (const tech of result.detections) {
 
 ## What it detects
 
-**502 built-in fingerprints** across 60 categories, plus whatever the optional external dataset adds.
+**588 built-in fingerprints** across 55 categories, plus whatever the optional external dataset adds.
 
 - **Platforms and CMS** — Shopify, WordPress, Wix, Squarespace, Webflow, Ghost, Drupal, Magento,
   BigCommerce, Salesforce Commerce Cloud, AEM, Sitecore, Contentful, Sanity, Framer, Odoo, and more
@@ -198,9 +198,21 @@ for (const tech of result.detections) {
   Qwik, Solid, htmx, Alpine, Rails, Django, Laravel, Spring, ASP.NET, Phoenix, FastAPI
 - **Infrastructure** — Cloudflare, Vercel, Netlify, Fastly, CloudFront, Akamai, Fly.io, Railway,
   Render, nginx, Apache, IIS, LiteSpeed, Caddy, plus DNS host and mail provider from DNS records
+- **Global ecommerce platforms** — VTEX, commercetools, SAP Commerce Cloud, Elastic Path, Spryker,
+  Medusa, Saleor, Swell, Vendure, Ecwid, Tiendanube/Nuvemshop, SHOPLINE, Big Cartel, Lightspeed,
+  Shift4Shop, Volusion, OpenCart, nopCommerce, CS-Cart, Dukaan, StoreHippo, Shopify Hydrogen and
+  Oxygen, Vue Storefront, Shogun
 - **Ecommerce app ecosystem** — Shopify app blocks are enumerated by their extension handle, which
   is the most reliable way to list a store's installed apps: Judge.me, Yotpo, Recharge, Klaviyo,
-  Gorgias, BOGOS, Rebuy, Loop, Smile.io, GoKwik, Shiprocket, AfterShip and many more
+  Gorgias, BOGOS, Rebuy, Loop Returns, Smile.io, Rivo, PushOwl, Swym, Videowise, Superfiliate,
+  Redo, Tapcart, SearchTap, Reelfy, GoKwik, Shiprocket, AfterShip and many more
+- **Global payments** — Mercado Pago, PayU, Paystack, Flutterwave, Midtrans, Xendit, dLocal, EBANX,
+  Airwallex, Razorpay, Juspay, Simpl, CCAvenue, Instamojo, Amazon Pay, Google Pay, Authorize.net,
+  Worldpay, Bolt, Klarna, Afterpay, Affirm
+- **Logistics and tax** — ShipStation, Shippo, Sendcloud, Narvar, Loop Returns, ReturnGO, Delhivery,
+  Nimbuspost, ClickPost, Avalara, TaxJar
+- **Growth and CDP** — MoEngage, CleverTap, WebEngage, mParticle, Branch, AppsFlyer, Sprinklr,
+  Fueled, Transcend
 - **Everything else** — payments, auth, analytics, ad pixels, support widgets, search, APM, feature
   flags, A/B testing, consent tools, CAPTCHAs, bot protection, CSS/UI frameworks, JS libraries,
   fonts, media and maps

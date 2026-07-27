@@ -20,6 +20,50 @@ import type {
 } from './types.js';
 
 /**
+ * Fetch a URL, falling back between the apex domain and its `www` form.
+ *
+ * Plenty of sites serve only one of the two. decathlon.com.br, for instance, does not accept
+ * connections on the apex at all while www.decathlon.com.br returns 200. Bulk prospect lists
+ * are full of bare apex domains, so without this a scan of a real list returns "fetch failed"
+ * for a slice of perfectly reachable stores, which looks like a tool bug and quietly shrinks
+ * the result set.
+ *
+ * The fallback is recorded as a warning so the reported URL is never silently different from
+ * the one that was asked for.
+ */
+async function fetchWithHostFallback(
+  url: string,
+  opts: AnalyzeOptions,
+  warnings: string[],
+): Promise<Awaited<ReturnType<typeof fetchPage>>> {
+  try {
+    return await fetchPage(url, opts);
+  } catch (firstError) {
+    let alternative: string | null = null;
+    try {
+      const parsed = new URL(url);
+      parsed.hostname = parsed.hostname.startsWith('www.')
+        ? parsed.hostname.slice(4)
+        : `www.${parsed.hostname}`;
+      alternative = parsed.toString();
+    } catch {
+      alternative = null;
+    }
+
+    if (!alternative) throw firstError;
+
+    try {
+      const page = await fetchPage(alternative, opts);
+      warnings.push(`${url} could not be reached, so ${alternative} was scanned instead.`);
+      return page;
+    } catch {
+      // Report the original failure: it is the one the user asked about.
+      throw firstError;
+    }
+  }
+}
+
+/**
  * Analyse a single URL and return every technology detected, with evidence.
  *
  * Collection is staged so that a failure in any optional signal source degrades the result
@@ -61,7 +105,7 @@ export async function analyze(
 
   // --- Stage 1: the page itself. Everything else is optional. ---
   progress('fetch', url);
-  const page = await time('fetch', () => fetchPage(url, opts));
+  const page = await time('fetch', () => fetchWithHostFallback(url, opts, warnings));
   const parsed = parseHtml(page.body, page.finalUrl);
   const hostname = hostOf(page.finalUrl);
   const apex = apexOf(hostname);

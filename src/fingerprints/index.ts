@@ -2,6 +2,7 @@ import type { Fingerprint } from '../types.js';
 import { analytics, advertising } from './analytics.js';
 import { commerceApps, conversion, payments } from './commerce.js';
 import { backend, frameworks, servers } from './frameworks.js';
+import { globalPayments, globalPlatforms, logistics, merchantGrowth, shopifyApps } from './ecommerce-global.js';
 import { dnsProviders, infrastructure, mail } from './infrastructure.js';
 import { fonts, libraries, media, misc, ui } from './libraries.js';
 import { platforms } from './platforms.js';
@@ -9,7 +10,7 @@ import { selfHosted } from './selfhosted.js';
 import { auth, data, marketing, observability, search, security, support } from './services.js';
 import { loadExternalDatabase } from './external.js';
 
-export const DATABASE_VERSION = '0.1.0';
+export const DATABASE_VERSION = '0.2.0';
 
 /**
  * The built-in fingerprint database, authored for this project and MIT licensed.
@@ -31,6 +32,11 @@ export const BUILTIN_FINGERPRINTS: Fingerprint[] = [
   ...payments,
   ...commerceApps,
   ...conversion,
+  ...globalPlatforms,
+  ...shopifyApps,
+  ...globalPayments,
+  ...logistics,
+  ...merchantGrowth,
   ...auth,
   ...data,
   ...search,
