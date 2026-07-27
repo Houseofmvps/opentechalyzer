@@ -141,6 +141,7 @@ Then just ask:
 | `verify_email` | SMTP email verification without sending anything |
 | `find_vulnerabilities` | CPE mapping plus live CVE lookup against NVD |
 | `track_tech_changes` | Diff against a stored baseline to catch stack changes |
+| `reverse_lookup` | **Find every site using a technology** via HTTP Archive on BigQuery |
 | `opentechalyzer_status` | Which capabilities and datasets are available |
 | `import_external_database` | Pull in the optional wider fingerprint dataset |
 
@@ -170,6 +171,40 @@ ota -i domains.txt -f csv -j 10 --fields contact,social,signals > enriched.csv
 
 The CSV has one row per technology per URL, with version, account IDs and confidence. Failures are
 reported per URL on stderr so one dead host never aborts a batch of thousands.
+
+## Reverse lookup: find every site using a technology
+
+The inverse of a scan. Instead of "what does this site run?", ask "which sites run this?" — the
+question that turns a detector into a lead-sourcing tool.
+
+```bash
+ota reverse --tech Shopify --tech Klaviyo --rank 100000 --dry-run
+ota reverse --tech Shopify --not-tech "Google Analytics" --limit 500 -f csv
+ota reverse --category Ecommerce --rank 10000
+```
+
+This queries the [HTTP Archive](https://httparchive.org/) public dataset on BigQuery, a monthly
+crawl of roughly 16 million pages. The data is free and public; what was missing was a way to
+query it without writing SQL.
+
+**Setup.** You need your own Google Cloud project, because BigQuery bills the querying project
+even though the dataset itself is public:
+
+```bash
+gcloud auth login && gcloud config set project YOUR_PROJECT
+```
+
+Alternatively set `GOOGLE_CLOUD_PROJECT` and `GOOGLE_ACCESS_TOKEN`.
+
+**Costs are guarded, not assumed.** The first 1 TB per month is free, and a careless query over
+this dataset can scan several TB in one go. So every query is dry-run first, the estimate is
+printed, and execution is refused above a 200 GB ceiling unless you raise `--max-bytes`. Start
+with `--dry-run`, and use `--rank` aggressively: it is by far the biggest lever on cost.
+
+**What it is not.** These results come from HTTP Archive's own Wappalyzer fork, not this project's
+fingerprints, so they can disagree with a direct scan. Coverage follows CrUX, so it skews to sites
+with real Chrome traffic and small stores may be absent entirely. Treat it as a sampling frame for
+building a prospect list, then verify each prospect with a real scan.
 
 ## Library
 
@@ -259,10 +294,11 @@ Being straight about the limits, because a detector that overstates itself is wo
 - **Backend is largely invisible.** A clean Go or Rails API serving JSON leaves no fingerprint. We
   report backend when it leaks through a header, cookie or error page, and stay quiet otherwise.
   For real backend intel, read the target's job listings.
-- **No reverse lookup.** You cannot ask "list every site using Shopify". That needs a web-scale
-  crawl of hundreds of millions of domains, which is the one thing a paid service genuinely has and
-  this does not. For that, query the free [HTTP Archive](https://httparchive.org/) dataset on
-  BigQuery, which is the same substrate those products are built on.
+- **Reverse lookup is not our own crawl.** `ota reverse` answers "which sites use Shopify" by
+  querying HTTP Archive, whose technology column comes from *their* Wappalyzer fork, not this
+  project's 588 fingerprints. Results can disagree with a direct scan of the same URL, coverage is
+  CrUX-based so low-traffic sites may be missing, and the data is a monthly snapshot. It is a
+  sampling frame, not a census. Verify individual prospects with a direct scan.
 - **No company or people data.** Employee counts, revenue and org charts come from data brokers.
   Company name, locations and founding year are extracted when the site publishes them in
   structured data, and are labelled `inferred` when guessed.

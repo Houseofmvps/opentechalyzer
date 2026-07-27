@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_FINGERPRINTS, listCategories } from '../src/fingerprints/index.js';
 import { convertWappalyzerTech } from '../src/fingerprints/external.js';
+import { buildReverseQuery, defaultCrawlDate } from '../src/reverse/bigquery.js';
 import type { Fingerprint, PatternInput } from '../src/types.js';
 
 function allPatterns(fp: Fingerprint): string[] {
@@ -174,5 +175,56 @@ describe('Wappalyzer format adapter', () => {
 
   it('damps imported fingerprints below built-in weight', () => {
     expect(convertWappalyzerTech('A', {}).weight).toBeLessThan(1);
+  });
+});
+
+describe('reverse lookup query builder', () => {
+  it('requires at least one filter so a full-table scan is impossible by accident', () => {
+    expect(() => buildReverseQuery({})).toThrow(/at least one/i);
+  });
+
+  it('always constrains the partition and cluster columns', () => {
+    const { sql } = buildReverseQuery({ tech: ['Shopify'] });
+    // date partitions the table and client/is_root_page cluster it. Without all three the
+    // query scans the whole month across both clients and every inner page.
+    expect(sql).toMatch(/WHERE date = '\d{4}-\d{2}-01'/);
+    expect(sql).toContain("client = 'mobile'");
+    expect(sql).toContain('is_root_page = TRUE');
+  });
+
+  it('ANDs multiple technologies via HAVING rather than WHERE', () => {
+    // A WHERE over the unnested array can only test one element at a time, so "Shopify AND
+    // Klaviyo" written that way silently returns nothing.
+    const { sql } = buildReverseQuery({ tech: ['Shopify', 'Klaviyo'] });
+    expect(sql).toContain("LOGICAL_OR(t.technology = 'Shopify')");
+    expect(sql).toContain("LOGICAL_OR(t.technology = 'Klaviyo')");
+    expect(sql).toContain('GROUP BY page');
+  });
+
+  it('negates excluded technologies', () => {
+    const { sql } = buildReverseQuery({ tech: ['Shopify'], notTech: ['WooCommerce'] });
+    expect(sql).toContain("LOGICAL_OR(t.technology = 'WooCommerce') = FALSE");
+  });
+
+  it('escapes quotes so a technology name cannot break out of the literal', () => {
+    const { sql } = buildReverseQuery({ tech: ["O'Reilly"] });
+    expect(sql).toContain("\\'Reilly");
+  });
+
+  it('backticks rank, which collides with the RANK window function', () => {
+    const { sql } = buildReverseQuery({ tech: ['Shopify'], rank: 1000 });
+    expect(sql).toContain('`rank` <= 1000');
+    expect(sql).not.toMatch(/[^`]\brank <= /);
+  });
+
+  it('caps the limit so a single call cannot pull unbounded rows', () => {
+    expect(buildReverseQuery({ tech: ['X'], limit: 999_999 }).sql).toContain('LIMIT 10000');
+    expect(buildReverseQuery({ tech: ['X'], limit: 0 }).sql).toContain('LIMIT 1');
+  });
+
+  it('defaults to a crawl month that already exists', () => {
+    // HTTP Archive publishes monthly and lags, so "now" is never a valid partition.
+    const date = defaultCrawlDate(new Date('2026-07-27T00:00:00Z'));
+    expect(date).toBe('2026-05-01');
   });
 });

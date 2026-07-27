@@ -16,6 +16,7 @@ import { lookupCves } from './enrich/cve.js';
 import { findSubdomains } from './enrich/subdomains.js';
 import { importTranco, trancoStatus } from './enrich/tranco.js';
 import { verifyEmail } from './enrich/verify-email.js';
+import { humanBytes, reverseLookup } from './reverse/bigquery.js';
 import {
   diffSnapshots,
   listWatched,
@@ -55,6 +56,7 @@ ${kleur.bold('USAGE')}
   opentechalyzer subdomains <domain...>
   opentechalyzer verify <email...>
   opentechalyzer cve <url>
+  opentechalyzer reverse --tech Shopify    ${kleur.gray('find ALL sites using a technology')}
   opentechalyzer watch <url...>            ${kleur.gray('detect tech changes since last scan')}
   opentechalyzer watch --list
   opentechalyzer db <import|import-tranco|status>
@@ -101,6 +103,19 @@ ${kleur.bold('EXAMPLES')}
   ota watch example.com                              ${kleur.gray('run on a cron for alerts')}
   ota db import                                      ${kleur.gray('widen fingerprint coverage')}
   ota db import-tranco                               ${kleur.gray('enable traffic ranking')}
+  ota reverse --tech Shopify --tech Klaviyo --rank 100000 --dry-run
+  ota reverse --tech Shopify --not-tech "Google Analytics" --limit 500 -f csv
+
+${kleur.bold('REVERSE LOOKUP')} ${kleur.gray('(needs a Google Cloud project, queries HTTP Archive on BigQuery)')}
+      --tech <name>       Technology that must be present (repeatable, ANDed)
+      --not-tech <name>   Technology that must be absent (repeatable)
+      --category <name>   Match a technology category instead, e.g. Ecommerce
+      --rank <n>          Only sites within the top n by CrUX popularity
+      --client <c>        desktop | mobile (default mobile)
+      --date <YYYY-MM-01> Crawl month (default: two months back)
+      --max-bytes <n>     Cost ceiling in bytes (default 200GB)
+  -l, --limit <n>         Max sites to return (default 100, max 10000)
+      --dry-run           Estimate cost and print the SQL, run nothing
 
 ${kleur.bold('DEEPER SCANS')}
   Each flag finds more. Combine them for a full picture:
@@ -132,9 +147,19 @@ interface ParsedArgs {
   showCategories: boolean;
   listMode: boolean;
   dnsOnly: boolean;
+  dryRun: boolean;
+  tech?: string[];
+  notTech?: string[];
+  category?: string;
+  rank?: number;
+  client?: 'desktop' | 'mobile';
+  date?: string;
+  project?: string;
+  maxBytes?: number;
+  limit?: number;
 }
 
-const SUBCOMMANDS = new Set(['db', 'database', 'subdomains', 'verify', 'cve', 'watch']);
+const SUBCOMMANDS = new Set(['db', 'database', 'subdomains', 'verify', 'cve', 'watch', 'reverse']);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const out: ParsedArgs = {
@@ -163,6 +188,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     showCategories: false,
     listMode: false,
     dnsOnly: false,
+    dryRun: false,
   };
 
   const next = (i: number): string | undefined => argv[i + 1];
@@ -218,6 +244,46 @@ function parseArgs(argv: string[]): ParsedArgs {
         break;
       case '--dns-only':
         out.dnsOnly = true;
+        break;
+      case '--dry-run':
+        out.dryRun = true;
+        break;
+      case '--tech':
+        (out.tech ??= []).push(next(i) ?? '');
+        i++;
+        break;
+      case '--not-tech':
+        (out.notTech ??= []).push(next(i) ?? '');
+        i++;
+        break;
+      case '--category':
+        out.category = next(i);
+        i++;
+        break;
+      case '--rank':
+        out.rank = Number(next(i) ?? 0);
+        i++;
+        break;
+      case '--client':
+        out.client = (next(i) === 'desktop' ? 'desktop' : 'mobile');
+        i++;
+        break;
+      case '--date':
+        out.date = next(i);
+        i++;
+        break;
+      case '--project':
+        out.project = next(i);
+        i++;
+        break;
+      case '--max-bytes':
+        out.maxBytes = Number(next(i) ?? 0);
+        i++;
+        break;
+      case '-l':
+      case '--limit':
+        out.limit = Number(next(i) ?? 100);
+        i++;
         break;
       case '--intrusive':
         out.options.intrusiveProbes = true;
@@ -557,6 +623,77 @@ async function runWatch(urls: string[], args: ParsedArgs): Promise<number> {
   return 0;
 }
 
+
+/** `reverse --tech X` */
+async function runReverse(args: ParsedArgs): Promise<number> {
+  const json = args.options.format === 'json';
+  try {
+    const result = await reverseLookup({
+      ...(args.tech?.length ? { tech: args.tech } : {}),
+      ...(args.notTech?.length ? { notTech: args.notTech } : {}),
+      ...(args.category ? { category: args.category } : {}),
+      ...(args.rank ? { rank: args.rank } : {}),
+      ...(args.client ? { client: args.client } : {}),
+      ...(args.date ? { date: args.date } : {}),
+      ...(args.project ? { projectId: args.project } : {}),
+      ...(args.maxBytes ? { maxBytes: args.maxBytes } : {}),
+      dryRun: args.dryRun,
+      ...(args.limit ? { limit: args.limit } : {}),
+      onProgress: (m) => {
+        if (!args.options.quiet && !json) process.stderr.write(kleur.gray(`  ${m}\n`));
+      },
+    });
+
+    if (json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return result.notRun ? 1 : 0;
+    }
+
+    process.stdout.write(`\n${kleur.bold('Reverse lookup')}  ${kleur.gray(`HTTP Archive crawl ${result.date}`)}\n`);
+    process.stdout.write(
+      `${kleur.gray('Scan estimate:')} ${humanBytes(result.estimatedBytes)}  ` +
+        `${kleur.gray('approx cost:')} $${result.estimatedCostUsd.toFixed(2)} ` +
+        `${kleur.gray('(first 1 TB per month is free)')}\n\n`,
+    );
+
+    if (result.notRun) {
+      process.stdout.write(`${kleur.yellow(result.notRun)}\n\n`);
+      if (args.options.verbose || args.dryRun) {
+        process.stdout.write(`${kleur.gray(result.query)}\n\n`);
+      }
+      return 0;
+    }
+
+    if (args.options.verbose) process.stdout.write(`${kleur.gray(result.query)}\n\n`);
+
+    const rows = result.rows ?? [];
+    if (rows.length === 0) {
+      process.stdout.write(
+        kleur.yellow('No sites matched. Check the technology name spelling, or try an earlier --date: ') +
+          kleur.yellow('HTTP Archive names come from their own Wappalyzer fork, not this project.\n\n'),
+      );
+      return 0;
+    }
+
+    for (const row of rows) {
+      const rank = row.rank ? kleur.gray(` #${row.rank}`) : '';
+      process.stdout.write(`  ${row.page}${rank}\n`);
+    }
+    process.stdout.write(`\n${kleur.green(`${rows.length} sites`)}\n`);
+    process.stdout.write(
+      kleur.gray(
+        'Source: HTTP Archive monthly crawl, detected with their Wappalyzer fork rather than this\n' +
+          "project's fingerprints, so results can differ from a direct scan. Coverage is CrUX-based,\n" +
+          'so small or low-traffic sites may be missing entirely.\n\n',
+      ),
+    );
+    return 0;
+  } catch (err) {
+    process.stderr.write(kleur.red(`\n${(err as Error).message}\n\n`));
+    return 1;
+  }
+}
+
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
 
@@ -594,6 +731,7 @@ async function main(): Promise<number> {
   if (args.command === 'verify') return runVerify(urls, args);
   if (args.command === 'cve') return runCve(urls, args);
   if (args.command === 'watch') return runWatch(urls, args);
+  if (args.command === 'reverse') return runReverse(args);
 
   if (args.showHelp || urls.length === 0) {
     process.stdout.write(`${HELP}\n`);

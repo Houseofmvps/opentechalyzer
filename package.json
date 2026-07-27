@@ -1,6 +1,6 @@
 {
   "name": "opentechalyzer",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Free, open source website technology detection. Identifies the full stack of any URL from headers, cookies, rendered DOM, JS globals, sourcemap dependencies, DNS records, certificate transparency, well-known probes and favicon hashes.",
   "keywords": [
     "tech-stack",

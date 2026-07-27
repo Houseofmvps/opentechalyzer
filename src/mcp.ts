@@ -29,6 +29,7 @@ import { findSubdomains } from './enrich/subdomains.js';
 import { trancoStatus } from './enrich/tranco.js';
 import { verifyEmail } from './enrich/verify-email.js';
 import { diffSnapshots, loadSnapshot, saveSnapshot, toSnapshot } from './enrich/watch.js';
+import { humanBytes, reverseLookup } from './reverse/bigquery.js';
 import { formatMarkdown, summarise } from './report/format.js';
 import type { AnalyzeResult, Category, Detection } from './types.js';
 
@@ -551,6 +552,90 @@ server.registerTool(
   },
 );
 
+
+server.registerTool(
+  'reverse_lookup',
+  {
+    title: 'Find all sites using a technology',
+    description:
+      'The inverse of detect_tech_stack: instead of "what does this site use?", answer "which sites use this?". ' +
+      'Queries the HTTP Archive public dataset on BigQuery, a monthly crawl of ~16 million pages. Use for lead ' +
+      'SOURCING (build a prospect list of Shopify stores that also run Klaviyo), market sizing, or competitor ' +
+      'displacement (sites running X but not Y).\n\n' +
+      'REQUIREMENTS AND COSTS, which you must relay to the user before running a non-dry-run query: this needs ' +
+      'their own Google Cloud project and credentials (gcloud auth, or a GOOGLE_ACCESS_TOKEN), and BigQuery bills ' +
+      'their project for bytes scanned. The first 1 TB per month is free. Every call is dry-run first and the ' +
+      'estimate is returned; execution is refused above a byte ceiling. Prefer dryRun:true first, tell the user ' +
+      'the estimated cost, and narrow with rank before running for real.\n\n' +
+      'ACCURACY CAVEAT to pass on: these results come from HTTP Archive\'s own Wappalyzer fork, NOT this ' +
+      "project's fingerprints, so they can disagree with detect_tech_stack on the same URL. Coverage is " +
+      'CrUX-based and skews to sites with real Chrome traffic, so small or new stores may be missing entirely. ' +
+      'It is a sampling frame, not a census.',
+    inputSchema: {
+      tech: z
+        .array(z.string())
+        .optional()
+        .describe('Technologies that must ALL be present, e.g. ["Shopify","Klaviyo"]. Names must match HTTP Archive\'s Wappalyzer naming.'),
+      notTech: z.array(z.string()).optional().describe('Technologies that must be absent. Useful for displacement targeting.'),
+      category: z.string().optional().describe('Match a technology category instead of a name, e.g. "Ecommerce".'),
+      rank: z
+        .number()
+        .optional()
+        .describe('Restrict to sites within the top N by CrUX popularity (1000, 10000, 100000, 1000000). Strongly recommended: it is the single biggest lever on query cost.'),
+      client: z.enum(['desktop', 'mobile']).optional().describe('Crawl profile. Default mobile.'),
+      date: z.string().optional().describe('Crawl month as YYYY-MM-01. Defaults to two months back, since the crawl lags.'),
+      limit: z.number().min(1).max(10000).optional().describe('Max sites to return. Default 100.'),
+      dryRun: z.boolean().optional().describe('Estimate the cost and return the SQL without running or billing anything. Do this first.'),
+      maxBytes: z.number().optional().describe('Byte ceiling; the query is refused above it. Default 200GB.'),
+      projectId: z.string().optional().describe('Google Cloud project to bill. Falls back to GOOGLE_CLOUD_PROJECT or gcloud config.'),
+    },
+  },
+  async ({ tech, notTech, category, rank, client, date, limit, dryRun, maxBytes, projectId }) => {
+    try {
+      const result = await reverseLookup({
+        ...(tech?.length ? { tech } : {}),
+        ...(notTech?.length ? { notTech } : {}),
+        ...(category ? { category } : {}),
+        ...(rank !== undefined ? { rank } : {}),
+        ...(client ? { client } : {}),
+        ...(date ? { date } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+        ...(maxBytes !== undefined ? { maxBytes } : {}),
+        ...(projectId ? { projectId } : {}),
+        dryRun: dryRun ?? false,
+      });
+
+      const lines: string[] = [
+        `Reverse lookup against the HTTP Archive crawl of ${result.date}.`,
+        `Estimated scan: ${humanBytes(result.estimatedBytes)} (~$${result.estimatedCostUsd.toFixed(2)}; first 1 TB/month is free).`,
+        '',
+      ];
+      if (result.notRun) {
+        lines.push(result.notRun, '', 'SQL that would run:', result.query);
+      } else {
+        const rows = result.rows ?? [];
+        lines.push(`${rows.length} sites matched.`, '');
+        for (const r of rows) lines.push(`${r.page}${r.rank ? `  (rank ${r.rank})` : ''}`);
+        lines.push(
+          '',
+          "Source: HTTP Archive monthly crawl, detected with their Wappalyzer fork rather than this project's",
+          'fingerprints, so results can differ from a direct scan. CrUX-based coverage means low-traffic sites',
+          'may be absent. Verify individual prospects with detect_tech_stack before acting on them.',
+        );
+      }
+      return {
+        content: [{ type: 'text' as const, text: lines.join('\n') }],
+        structuredContent: result as unknown as Record<string, unknown>,
+      };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Reverse lookup failed: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 server.registerTool(
   'opentechalyzer_status',
   {
@@ -579,7 +664,7 @@ server.registerTool(
         : `Traffic ranking: not installed, so trafficRank and trafficLevel are unavailable. The user can run \`opentechalyzer db import-tranco\`.`,
       '',
       'Available tools: detect_tech_stack, detect_tech_stack_batch, compare_tech_stacks, tech_stack_report,',
-      'find_subdomains, verify_email, find_vulnerabilities, track_tech_changes.',
+      'find_subdomains, verify_email, find_vulnerabilities, track_tech_changes, reverse_lookup.',
     ].join('\n');
     return {
       content: [{ type: 'text' as const, text }],
